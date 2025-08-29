@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Deadlock Top Heroes by Win Rate</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: #121821;
+        --muted: #8aa0b2;
+        --text: #e6eef6;
+        --accent: #4cc9f0;
+        --accent-2: #b5179e;
+        --ok: #2dd4bf;
+        --warn: #fbbf24;
+        --err: #ef4444;
+        --card: #0f1720;
+        --chip: #1a2230;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: linear-gradient(180deg, #0b0f14 0%, #0a0e13 100%);
+        color: var(--text);
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .title {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .title h1 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: 0.3px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid #1c2431;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+      }
+      .controls {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      label { color: var(--muted); font-size: 13px; }
+      input, select, button {
+        background: var(--chip);
+        color: var(--text);
+        border: 1px solid #223045;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      button.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: none; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .card {
+        background: linear-gradient(180deg, #0f1720 0%, #0e141d 100%);
+        border: 1px solid #1a2230;
+        border-radius: 16px;
+        padding: 16px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .hero-badge {
+        width: 48px; height: 48px; border-radius: 10px; background: #0b1119; border: 1px solid #1a2230; display: grid; place-items: center;
+      }
+      .hero-badge img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
+      .hero-info { flex: 1; min-width: 0; }
+      .hero-name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sub { color: var(--muted); font-size: 12px; }
+      .meter {
+        position: relative;
+        height: 8px;
+        background: #0b1119;
+        border: 1px solid #1a2230;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .meter > span { display: block; height: 100%; background: linear-gradient(90deg, var(--ok), var(--accent)); }
+      footer { margin-top: 22px; color: var(--muted); font-size: 12px; text-align: center; }
+      a { color: var(--accent); text-decoration: none; }
+      .status { font-size: 13px; color: var(--muted); margin-top: 8px; }
+      .error { color: var(--err); }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="panel">
+        <header>
+          <div class="title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18M3 12h18M3 18h18" stroke="#4cc9f0" stroke-width="2" stroke-linecap="round"/></svg>
+            <h1>Top Heroes by Win Rate</h1>
+          </div>
+          <div class="controls">
+            <label>Sort direction
+              <select id="sortDir">
+                <option value="desc" selected>desc</option>
+                <option value="asc">asc</option>
+              </select>
+            </label>
+            <button id="refresh" class="primary">Refresh</button>
+          </div>
+        </header>
+        <div id="status" class="status">Ready</div>
+        <div id="grid" class="grid"></div>
+      </div>
+      <footer>
+        Data: Analytics API and Assets API. Docs: <a href="https://assets.deadlock-api.com/scalar" target="_blank" rel="noreferrer">Scalar</a>
+      </footer>
+    </div>
+
+    <script>
+      const API_BASE = 'https://api.deadlock-api.com';
+      const ASSETS_BASE = 'https://assets.deadlock-api.com/v2';
+
+      const grid = document.getElementById('grid');
+      const statusEl = document.getElementById('status');
+      const sortDirEl = document.getElementById('sortDir');
+      const refreshBtn = document.getElementById('refresh');
+
+      function setStatus(msg, isError = false) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('error', isError);
+      }
+
+      async function fetchJson(url, params) {
+        const qs = params ? ('?' + new URLSearchParams(params)) : '';
+        const resp = await fetch(url + qs, { headers: { 'Accept': 'application/json' } });
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status + ' ' + url);
+        }
+        return resp.json();
+      }
+
+      async function loadHeroesMap() {
+        const data = await fetchJson(`${ASSETS_BASE}/heroes`);
+        const items = Array.isArray(data) ? data : (data.heroes || data.data || []);
+        const map = new Map();
+        for (const h of items) {
+          const id = h.id ?? h.hero_id ?? h.heroId;
+          const name = h.name ?? h.displayName ?? h.localized_name;
+          const fallbackImg = pickHeroImage(h?.images);
+          if (id != null) {
+            map.set(Number(id), { name: name || `Hero ${id}`, img: fallbackImg || null });
+          }
+        }
+        return map;
+      }
+
+      const heroImgCache = new Map();
+      function pickHeroImage(images) {
+        if (!images) return null;
+        const candidates = [
+          images.icon_image_small_webp,
+          images.icon_image_small,
+          images.icon_hero_card_webp,
+          images.icon_hero_card,
+          images.selection_image_webp,
+          images.selection_image,
+          images.top_bar_image_webp,
+          images.top_bar_image,
+          images.background_image_webp,
+          images.background_image,
+          images.name_image,
+          images.minimap_image_webp,
+          images.minimap_image
+        ];
+        for (const url of candidates) {
+          if (typeof url === 'string' && url.length > 0) return url;
+        }
+        return null;
+      }
+      async function getHeroImageByName(name) {
+        if (!name) return null;
+        if (heroImgCache.has(name)) return heroImgCache.get(name);
+        try {
+          const slug = encodeURIComponent(String(name));
+          const data = await fetchJson(`${ASSETS_BASE}/heroes/by-name/${slug}`);
+          const img = pickHeroImage(data?.images);
+          heroImgCache.set(name, img || null);
+          return img || null;
+        } catch (_) {
+          heroImgCache.set(name, null);
+          return null;
+        }
+      }
+
+      function asPercent(value) {
+        if (value == null) return 0;
+        const v = Number(value);
+        if (!Number.isFinite(v)) return 0;
+        return v >= 0 && v <= 1 ? v * 100 : v;
+      }
+
+      function cardTemplate(entry, hero, imgUrl) {
+        const wr = asPercent(entry.value);
+        const width = Math.max(0, Math.min(100, wr));
+        const img = imgUrl ? `<img src="${imgUrl}" alt="" loading="lazy"/>` : '';
+        return `
+          <div class="card">
+            <div class="hero-badge">${img}</div>
+            <div class="hero-info">
+              <div class="hero-name">${hero?.name || `Hero ${entry.hero_id}`}</div>
+              <div class="sub">Win rate: ${wr.toFixed(1)}% · Matches: ${entry.matches}</div>
+              <div class="meter" aria-label="${wr.toFixed(1)}%">
+                <span style="width:${width}%"></span>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      async function render() {
+        const sortDir = sortDirEl.value || 'desc';
+        setStatus('Loading...');
+        grid.innerHTML = '';
+        try {
+          const [heroesMap, scoreboard] = await Promise.all([
+            loadHeroesMap(),
+            fetchJson(`${API_BASE}/v1/analytics/scoreboards/heroes`, {
+              sort_by: 'winrate',
+              sort_direction: sortDir
+            })
+          ]);
+          const all = Array.isArray(scoreboard) ? scoreboard : [];
+          const imgs = await Promise.all(all.map(e => {
+            const hero = heroesMap.get(Number(e.hero_id));
+            return getHeroImageByName(hero?.name);
+          }));
+          const html = all.map((e, i) => {
+            const hero = heroesMap.get(Number(e.hero_id));
+            const img = imgs[i] || hero?.img || null;
+            return cardTemplate(e, hero, img);
+          }).join('');
+          grid.innerHTML = html || '<div class="sub">No data</div>';
+          setStatus(`Showing ${all.length} heroes (sorted ${sortDir})`);
+        } catch (err) {
+          console.error(err);
+          setStatus('Failed to load data. See console for details.', true);
+        }
+      }
+
+      refreshBtn.addEventListener('click', render);
+      window.addEventListener('keydown', (e) => { if (e.key === 'Enter') render(); });
+      render();
+    </script>
+  </body>
+  </html>
+
+
